@@ -13,7 +13,6 @@ use esp_hal::{
     time::{Duration, Instant},
 };
 
-
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
     loop {}
@@ -34,14 +33,10 @@ fn main() -> ! {
     // generator version: 1.3.0
     // generator parameters: --chip esp32c3 -o unstable-hal -o alloc -o ci -o zed
 
-
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let _peripherals = esp_hal::init(config);
 
-
-
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 66320);
-
 
     loop {
         esp_println::println!("Bing!");
