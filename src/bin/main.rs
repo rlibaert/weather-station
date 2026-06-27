@@ -8,11 +8,14 @@
 #![deny(clippy::large_stack_frames)]
 
 use bme280::i2c::BME280;
+use embedded_graphics::Drawable;
+use esp_hal::time::Rate;
 use esp_hal::{
-    clock::CpuClock, i2c, interrupt::software::SoftwareInterruptControl, timer::timg::TimerGroup,
+    clock::CpuClock, interrupt::software::SoftwareInterruptControl, timer::timg::TimerGroup,
 };
+use esp_hal::{i2c, spi};
 use esp_println::println;
-use log::{debug, info};
+use log::{debug, error, info};
 
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
@@ -53,6 +56,55 @@ async fn main(spawner: embassy_executor::Spawner) {
             .with_sda(_peripherals.GPIO6)
             .with_scl(_peripherals.GPIO7)
     };
+
+    let spi = {
+        info!("initializing SPI...");
+        let config = spi::master::Config::default()
+            .with_frequency(Rate::from_khz(100))
+            .with_mode(spi::Mode::_0);
+        spi::master::Spi::new(_peripherals.SPI2, config)
+            .inspect_err(|e| error!("Error while creating SPI: {e}"))
+            .unwrap()
+            .with_sck(_peripherals.GPIO8)
+            .with_mosi(_peripherals.GPIO10)
+    };
+
+    let mut driver = {
+        use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull};
+
+        let busy = Input::new(
+            _peripherals.GPIO2,
+            InputConfig::default().with_pull(Pull::Up),
+        );
+        let res = Output::new(_peripherals.GPIO3, Level::High, OutputConfig::default());
+        let dc = Output::new(_peripherals.GPIO4, Level::Low, OutputConfig::default());
+        let cs = Output::new(_peripherals.GPIO5, Level::High, OutputConfig::default());
+
+        let device = embedded_hal_bus::spi::ExclusiveDevice::new(spi, cs, embassy_time::Delay)
+            .inspect_err(|e| error!("Error creating exclusive spi device: {e}"))
+            .unwrap();
+        let iface = display_interface_spi::SPIInterface::new(device, dc);
+
+        weact_studio_epd::WeActStudio213BlackWhiteDriver::new(iface, busy, res, embassy_time::Delay)
+    };
+    driver.init().unwrap();
+
+    let mut display = weact_studio_epd::graphics::Display213BlackWhite::new();
+    display.set_rotation(weact_studio_epd::graphics::DisplayRotation::Rotate90);
+
+    let style = embedded_graphics::mono_font::MonoTextStyle::new(
+        &profont::PROFONT_24_POINT,
+        weact_studio_epd::Color::Black,
+    );
+    let _ = embedded_graphics::text::Text::with_text_style(
+        "Hello World!",
+        embedded_graphics::geometry::Point::new(8, 68),
+        style,
+        embedded_graphics::text::TextStyle::default(),
+    )
+    .draw(&mut display);
+
+    driver.full_update(&display).unwrap();
 
     spawner.spawn(task_bme280(i2c).unwrap());
     spawner.spawn(task_dummy().unwrap());

@@ -19,6 +19,11 @@ log = "0.4.33"
 esp-rtos = { version = "0.3.0", features = ["embassy", "esp32c3"] }
 embassy-executor = "0.10.0"
 embassy-time = "0.5.1"
+embedded-hal-bus = "0.3.0"
+display-interface-spi = "0.5.0"
+weact-studio-epd = { version = "0.1.2", features = ["blocking"] }
+embedded-graphics = "0.8.2"
+profont = "0.7.0"
 
 
 # For fine tuning these settings, please refer to https://doc.rust-lang.org/cargo/reference/profiles.html
