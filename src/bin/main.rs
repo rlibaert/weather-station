@@ -8,7 +8,9 @@
 #![deny(clippy::large_stack_frames)]
 
 use bme280::i2c::BME280;
-use esp_hal::{clock::CpuClock, i2c, main};
+use esp_hal::{
+    clock::CpuClock, i2c, interrupt::software::SoftwareInterruptControl, timer::timg::TimerGroup,
+};
 use esp_println::println;
 use log::{debug, info};
 
@@ -27,8 +29,8 @@ esp_bootloader_esp_idf::esp_app_desc!();
     clippy::large_stack_frames,
     reason = "it's not unusual to allocate larger buffers etc. in main"
 )]
-#[main]
-fn main() -> ! {
+#[esp_rtos::main]
+async fn main(spawner: embassy_executor::Spawner) {
     // generator version: 1.3.0
     // generator parameters: --chip esp32c3 -o unstable-hal -o alloc -o ci -o zed
 
@@ -39,6 +41,10 @@ fn main() -> ! {
 
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 66320);
 
+    let timg0 = TimerGroup::new(_peripherals.TIMG0);
+    let sw_int = SoftwareInterruptControl::new(_peripherals.SW_INTERRUPT);
+    esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
+
     let i2c = {
         info!("initializing I2C...");
         let config = i2c::master::Config::default();
@@ -48,8 +54,13 @@ fn main() -> ! {
             .with_scl(_peripherals.GPIO7)
     };
 
-    let mut delay = esp_hal::delay::Delay::new();
+    spawner.spawn(task_bme280(i2c).unwrap());
+    spawner.spawn(task_dummy().unwrap());
+}
 
+#[embassy_executor::task]
+async fn task_bme280(i2c: i2c::master::I2c<'static, esp_hal::Blocking>) {
+    let mut delay = embassy_time::Delay;
     let mut bme280 = {
         info!("initializing BME280...");
         const ADDRESS: u8 = 0x76; // SDO connected to GND
@@ -70,8 +81,14 @@ fn main() -> ! {
             measurements.pressure / 100.0
         );
 
-        delay.delay_millis(2000);
+        embassy_time::Timer::after_millis(5_000).await;
     }
+}
 
-    // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.1.0/examples
+#[embassy_executor::task]
+async fn task_dummy() {
+    loop {
+        info!("Hello world from embassy!");
+        embassy_time::Timer::after_millis(10_000).await;
+    }
 }
