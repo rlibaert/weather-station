@@ -16,7 +16,6 @@ use esp_hal::{
     clock::CpuClock, interrupt::software::SoftwareInterruptControl, timer::timg::TimerGroup,
 };
 use esp_hal::{i2c, spi};
-use esp_println::println;
 use log::{debug, error, info};
 
 #[panic_handler]
@@ -104,24 +103,10 @@ async fn main(spawner: embassy_executor::Spawner) {
     };
     driver.init().unwrap();
 
-    let mut display = weact_studio_epd::graphics::Display213BlackWhite::new();
-    display.set_rotation(weact_studio_epd::graphics::DisplayRotation::Rotate270);
-
     let style = embedded_graphics::mono_font::MonoTextStyle::new(
         &profont::PROFONT_24_POINT,
         weact_studio_epd::Color::Black,
     );
-
-    let _ = embedded_graphics::text::Text::with_text_style(
-        "Hello World!",
-        embedded_graphics::geometry::Point::new(8, 68),
-        style,
-        embedded_graphics::text::TextStyle::default(),
-    )
-    .draw(&mut display);
-
-    driver.full_update(&display).unwrap();
-    driver.sleep().unwrap();
 
     static UPDATES_CHANNEL: Channel<CriticalSectionRawMutex, UpdateType, 8> = Channel::new();
     spawner.spawn(task_bme280(bme280, UPDATES_CHANNEL.sender()).unwrap());
@@ -129,7 +114,34 @@ async fn main(spawner: embassy_executor::Spawner) {
     loop {
         match UPDATES_CHANNEL.receive().await {
             UpdateType::BME(t, h, p) => {
-                println!("[{:.1} °C] [{:.1} %] [{:.1} hPa]", t, h, p / 100.0);
+                info!("BME: t={t} °C, h={h} %, p={p} Pa");
+                let mut display = weact_studio_epd::graphics::Display213BlackWhite::new();
+                display.set_rotation(weact_studio_epd::graphics::DisplayRotation::Rotate270);
+
+                _ = embedded_graphics::text::Text::new(
+                    alloc::format!("[{:.1} °C]", t).as_str(),
+                    embedded_graphics::geometry::Point::new(8, 32),
+                    style,
+                )
+                .draw(&mut display);
+
+                _ = embedded_graphics::text::Text::new(
+                    alloc::format!("[{:.1} %]", h).as_str(),
+                    embedded_graphics::geometry::Point::new(8, 64),
+                    style,
+                )
+                .draw(&mut display);
+
+                _ = embedded_graphics::text::Text::new(
+                    alloc::format!("[{:.1} hPa]", p / 100.0).as_str(),
+                    embedded_graphics::geometry::Point::new(8, 96),
+                    style,
+                )
+                .draw(&mut display);
+
+                driver.wake_up().unwrap();
+                driver.fast_update(&display).unwrap();
+                driver.sleep().unwrap();
             }
         }
     }
@@ -147,11 +159,7 @@ async fn task_bme280(
     loop {
         let m = bme280.measure(&mut embassy_time::Delay).unwrap();
         channel
-            .send(UpdateType::BME(
-                m.temperature,
-                m.humidity,
-                m.pressure / 100.0,
-            ))
+            .send(UpdateType::BME(m.temperature, m.humidity, m.pressure))
             .await;
         embassy_time::Timer::after_secs(60).await;
     }
