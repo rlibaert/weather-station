@@ -8,6 +8,8 @@
 #![deny(clippy::large_stack_frames)]
 
 use bme280::i2c::BME280;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::{Channel, Sender};
 use embedded_graphics::Drawable;
 use esp_hal::time::Rate;
 use esp_hal::{
@@ -68,7 +70,6 @@ async fn main(spawner: embassy_executor::Spawner) {
             .unwrap();
         bme280
     };
-    spawner.spawn(task_bme280(bme280).unwrap());
 
     let spi = {
         debug!("Initializing SPI...");
@@ -121,19 +122,37 @@ async fn main(spawner: embassy_executor::Spawner) {
 
     driver.full_update(&display).unwrap();
     driver.sleep().unwrap();
+
+    static UPDATES_CHANNEL: Channel<CriticalSectionRawMutex, UpdateType, 8> = Channel::new();
+    spawner.spawn(task_bme280(bme280, UPDATES_CHANNEL.sender()).unwrap());
+
+    loop {
+        match UPDATES_CHANNEL.receive().await {
+            UpdateType::BME(t, h, p) => {
+                println!("[{:.1} °C] [{:.1} %] [{:.1} hPa]", t, h, p / 100.0);
+            }
+        }
+    }
+}
+
+enum UpdateType {
+    BME(f32, f32, f32),
 }
 
 #[embassy_executor::task]
-async fn task_bme280(mut bme280: BME280<i2c::master::I2c<'static, esp_hal::Blocking>>) {
+async fn task_bme280(
+    mut bme280: BME280<i2c::master::I2c<'static, esp_hal::Blocking>>,
+    channel: Sender<'static, CriticalSectionRawMutex, UpdateType, 8>,
+) {
     loop {
-        let measurements = bme280.measure(&mut embassy_time::Delay).unwrap();
-        println!(
-            "[{:.1} °C] [{:.1} %] [{:.1} hPa]",
-            measurements.temperature,
-            measurements.humidity,
-            measurements.pressure / 100.0
-        );
-
+        let m = bme280.measure(&mut embassy_time::Delay).unwrap();
+        channel
+            .send(UpdateType::BME(
+                m.temperature,
+                m.humidity,
+                m.pressure / 100.0,
+            ))
+            .await;
         embassy_time::Timer::after_secs(60).await;
     }
 }
