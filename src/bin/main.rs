@@ -113,7 +113,7 @@ async fn main(spawner: embassy_executor::Spawner) {
 
     loop {
         match UPDATES_CHANNEL.receive().await {
-            UpdateType::BME(t, h, p) => {
+            UpdateType::Bme(t, h, p) => {
                 info!("BME: t={t} °C, h={h} %, p={p} Pa");
                 let mut display = weact_studio_epd::graphics::Display213BlackWhite::new();
                 display.set_rotation(weact_studio_epd::graphics::DisplayRotation::Rotate270);
@@ -148,7 +148,7 @@ async fn main(spawner: embassy_executor::Spawner) {
 }
 
 enum UpdateType {
-    BME(f32, f32, f32),
+    Bme(f32, f32, f32),
 }
 
 #[embassy_executor::task]
@@ -159,7 +159,7 @@ async fn task_bme280(
     loop {
         let m = bme280.measure(&mut embassy_time::Delay).unwrap();
         channel
-            .send(UpdateType::BME(m.temperature, m.humidity, m.pressure))
+            .send(UpdateType::Bme(m.temperature, m.humidity, m.pressure))
             .await;
         embassy_time::Timer::after_secs(60).await;
     }
